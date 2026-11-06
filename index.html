@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Lab: how LLMs read, and what they forget</title>
+<style>
+:root{--bg:#f2f5f8;--fg:#14213d;--mut:#5b6678;--card:#fff;--line:#d5dce6;--ac:#0f766e;--hl:#ffd23f;--bad:#b42318;--ok:#067647;--t1:#cfe8ff;--t2:#ffe3b3;--t3:#d9f2d0;--t4:#f6d3ef}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1522;--fg:#e6ebf4;--mut:#9aa6ba;--card:#16203a;--line:#2a3756;--ac:#4fd1c5;--hl:#b38f00;--bad:#ff8a80;--ok:#6ee7a0;--t1:#1f4a75;--t2:#6b4a14;--t3:#2c5a2a;--t4:#6b2a63}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif}
+h1,h2,h3{font-family:Palatino,"Iowan Old Style",Georgia,serif;line-height:1.2}
+header{padding:28px 20px 8px;max-width:860px;margin:auto}header h1{font-size:2rem;margin:0 0 6px}header p{margin:0;color:var(--mut)}
+nav{position:sticky;top:0;background:var(--bg);z-index:5;display:flex;gap:6px;overflow-x:auto;padding:10px 20px;max-width:860px;margin:auto;border-bottom:1px solid var(--line)}
+nav button{white-space:nowrap;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:6px 12px;border-radius:20px;cursor:pointer;font:inherit;font-size:.9rem}
+nav button.on{background:var(--fg);color:var(--bg)}nav small{color:var(--mut)}
+main{max-width:860px;margin:auto;padding:12px 20px 60px}section{display:none}section.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:14px 0}
+.note{border-left:4px solid var(--hl);padding:8px 14px;background:var(--card);margin:14px 0}
+.tok{display:inline-block;padding:1px 3px;margin:2px 1px;border-radius:4px;font:14px ui-monospace,Menlo,monospace;white-space:pre;border:1px solid transparent}
+.t0{background:var(--t1)}.t1{background:var(--t2)}.t2{background:var(--t3)}.t3{background:var(--t4)}
+textarea,select,input[type=text]{width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+button.b{background:var(--ac);color:#fff;border:0;padding:8px 14px;border-radius:6px;font:inherit;cursor:pointer;margin:4px 4px 4px 0}
+button.b.alt{background:var(--card);color:var(--fg);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid var(--hl);outline-offset:2px}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:center}.stat{font-size:1.5rem;font-family:Palatino,Georgia,serif}.mut{color:var(--mut);font-size:.9rem}
+.bar{display:flex;height:34px;border-radius:6px;overflow:hidden;border:1px solid var(--line);background:var(--bg)}.bar div{font-size:.75rem;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#14213d}
+.msg{padding:6px 10px;margin:4px 0;border-radius:6px;font-size:.92rem;border:1px solid var(--line)}.msg.out{opacity:.4;text-decoration:line-through}.msg.sum{background:var(--t2)}.msg.in{background:var(--card)}
+.ok{color:var(--ok)}.bad{color:var(--bad)}pre{background:#0e1522;color:#e6ebf4;padding:14px;border-radius:8px;overflow-x:auto;font-size:.85rem}
+label{display:block;margin-top:8px}input[type=range]{width:100%}table{border-collapse:collapse;font-size:.9rem}td,th{padding:3px 10px;border-bottom:1px solid var(--line);text-align:left}
+.opt{display:block;width:100%;text-align:left;margin:5px 0;padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit;cursor:pointer}
+.opt.right{border-color:var(--ok);background:var(--t3)}.opt.wrong{border-color:var(--bad)}
+</style></head><body>
+<header><h1>Token Lab</h1><p>How a language model actually reads your text, and what it forgets when the conversation gets long. About 45 minutes, self-paced.</p></header>
+<nav id="nav"></nav>
+<main>
+
+<section id="s0"><h2>Models don't read words</h2>
+<p>A language model never sees letters or words. It sees a list of integers called <b>tokens</b>. A tokenizer chops your text into pieces from a fixed vocabulary, and each piece gets an ID number. Everything that follows (cost, speed, limits, some odd mistakes) comes from this one step.</p>
+<div class="card"><b>Why you should care when building apps</b>
+<ul><li><b>Money:</b> APIs bill per token, not per word.</li><li><b>Limits:</b> the context window is measured in tokens. Overflow it and old text is lost or the call fails.</li><li><b>Fairness:</b> the same sentence can cost 3x more in Tamil than in English. You will measure this yourself in Part 2.</li></ul></div>
+<div class="note"><b>Rule of thumb for English:</b> 1 token is about 4 characters, or 3/4 of a word. Treat it as a rough guide. Each model family uses its own tokenizer, so counts differ.</div>
+<div class="card"><b>By the end you will be able to</b><ul><li>Explain how BPE builds a vocabulary from data.</li><li>Predict roughly how many tokens a text will use, and why some languages cost more.</li><li>Choose a memory strategy when a conversation outgrows the context window.</li><li>Split a token budget between prompt, history, retrieved documents and answer.</li></ul></div>
+<p><b>Your path:</b> (1) build a tokenizer by hand, (2) test it on real text, (3) watch a chatbot run out of memory, (4) fix it, (5) plan a token budget, (6) quiz.</p>
+<button class="b" onclick="go(1)">Start Part 1</button></section>
+
+<section id="s1"><h2>Part 1: How a tokenizer is built (BPE)</h2>
+<p>Most modern models use <b>Byte Pair Encoding</b>. The idea is simple: start with single characters, then repeatedly <b>merge the most frequent neighbouring pair</b> into one new token. Common chunks like "est" or "ing" become single tokens. Rare words stay split up.</p>
+<div class="card"><p class="mut">Tiny training set (word × how often it appears). "_" marks the end of a word. Press the button and watch the pair counts.</p>
+<div id="bpeWords"></div><button class="b" onclick="bpeStep()">Do next merge</button><button class="b alt" onclick="bpeReset()">Reset</button>
+<div class="row"><div><b>Pair counts</b><div id="bpePairs"></div></div><div><b>Merges so far</b><div id="bpeLog" class="mut">none yet</div></div></div></div>
+<div class="note"><b>Try this:</b> before each click, guess which pair wins. After 3 or 4 merges, which word has become a single token? Why did "est" show up before "lo"?</div>
+<p><b>Takeaway:</b> the vocabulary is <i>learned from data</i>, not designed by hand. Frequent patterns get short token sequences. That is why English (heavily represented in training data) is cheap and other languages are not.</p>
+<button class="b" onclick="go(2)">Next: test it on real text</button></section>
+
+<section id="s2"><h2>Part 2: Token playground</h2>
+<p>This toy tokenizer was trained in your browser on a small English paragraph (about 120 merges). Real tokenizers use 100,000+ merges, so exact numbers differ, but the behaviour is the same. Anything the vocabulary has never seen falls back to raw UTF-8 bytes, shown as <code>‹E0›</code>.</p>
+<div class="card"><textarea id="pt" rows="3">Tokenization is unbelievably useful.</textarea>
+<div class="mut">Try:
+<button class="b alt" onclick="ex('strawberry')">strawberry</button><button class="b alt" onclick="ex('Hello, how are you today?')">English</button><button class="b alt" onclick="ex('வணக்கம், நீங்கள் எப்படி இருக்கிறீர்கள்?')">Tamil</button><button class="b alt" onclick="ex('def add(a, b):\n    return a + b')">Code</button><button class="b alt" onclick="ex('1234567890')">Digits</button></div>
+<p id="ptOut" style="margin-top:12px"></p>
+<div class="row"><div><div class="stat" id="pc1">0</div><div class="mut">tokens</div></div><div><div class="stat" id="pc2">0</div><div class="mut">characters</div></div><div><div class="stat" id="pc3">0</div><div class="mut">characters per token</div></div></div></div>
+<div class="card"><b>Experiment log (fill in as you go)</b>
+<ol><li>Compare "Hello, how are you today?" with the Tamil greeting. Which has fewer characters per token?</li><li>Type a made-up word like "flibbergast". Does it become one token or several pieces?</li><li>Why might a model struggle to count the r's in "strawberry"? (Hint: does it see letters?)</li></ol></div>
+<div class="note"><b>Real-world impact:</b> if your app serves Indian-language users, budget more tokens per request and test with real user text. English-only cost estimates will be too low.</div>
+<button class="b" onclick="go(3)">Next: the context window</button></section>
+
+<section id="s3"><h2>Part 3: The context window</h2>
+<p>The <b>context window</b> is the maximum number of tokens a model can look at in one call: system prompt + conversation history + any documents + the answer it writes. The model has <b>no memory between calls</b>. Your app resends the history every time, and when it no longer fits, something must be dropped.</p>
+<div class="card"><div class="row"><div style="flex:1;min-width:200px"><label for="win">Window size: <b id="winV">90</b> tokens (tiny, so the effect is easy to see)</label><input type="range" id="win" min="40" max="260" value="90" oninput="sim()"></div>
+<div style="flex:1;min-width:200px"><label for="nm">Messages sent so far: <b id="nmV">8</b></label><input type="range" id="nm" min="1" max="8" value="8" oninput="sim()"></div></div>
+<label for="strat">Memory strategy</label><select id="strat" onchange="sim()"><option value="trunc">1. Drop the oldest messages (simplest)</option><option value="pin">2. Pin the first message, drop the middle</option><option value="sum">3. Summarise what was dropped</option></select>
+<div id="simOut" style="margin-top:12px"></div><div id="simVerdict" style="margin-top:8px"></div><div class="bar" id="simBar" style="margin-top:8px"></div></div>
+<div class="note"><b>Challenge:</b> the user said they are allergic to peanuts in message 1. With all 8 messages sent, find a window size and strategy where the bot stays safe. Then find the smallest window where each strategy still works.</div>
+<p><b>What you just saw:</b> <br>• <b>Dropping oldest</b> is cheap but loses key facts, which is a real safety bug.<br>• <b>Pinning</b> keeps important instructions but needs you to know what's important.<br>• <b>Summarising</b> compresses history. In production an extra LLM call writes the summary, which costs money and can lose details. Real systems often combine all three, and also store facts in a database to retrieve later.</p>
+<button class="b" onclick="go(4)">Next: plan a budget</button></section>
+
+<section id="s4"><h2>Part 4: Challenge, budget a support bot</h2>
+<p>You are building a customer-support bot on a model with an <b>8,000-token window</b>. Split the budget so the call fits <b>and</b> meets these requirements:</p>
+<ul><li>System prompt: at least 300 tokens</li><li>Retrieved help-article chunks: at least 1,500 tokens (about 3 chunks)</li><li>Reserved for the answer: at least 800 tokens</li><li>Total must not exceed 8,000</li></ul>
+<div class="card" id="bud"></div><div class="bar" id="budBar"></div><p id="budRes" style="margin-top:10px"></p>
+<div class="note"><b>Gotcha:</b> the output counts against the window. If you fill 8,000 with input, the model has no room to answer and the reply is cut off mid-sentence. Always reserve output space first.</div>
+<p class="mut">Prices here are illustrative ($3 per million input tokens, $15 per million output). Check your provider's current pricing.</p>
+<button class="b" onclick="go(5)">Next: quiz</button></section>
+
+<section id="s5"><h2>Part 5: Knowledge check</h2><div id="quiz"></div><div id="quizEnd"></div>
+<h3>Where this shows up in real products</h3>
+<div class="card" style="overflow-x:auto"><table><tr><th>Product</th><th>Token problem</th><th>Technique from this lesson</th></tr>
+<tr><td>Customer-support chatbot</td><td>Long chats overflow the window</td><td>Pin rules, summarise old turns</td></tr>
+<tr><td>RAG question answering</td><td>Retrieved chunks compete with history for space</td><td>Fixed budget per section (Part 4)</td></tr>
+<tr><td>Multilingual app</td><td>Non-English text costs more tokens</td><td>Measure tokens on real user text</td></tr>
+<tr><td>Coding assistant</td><td>Big files do not fit</td><td>Send only relevant parts, count first</td></tr>
+<tr><td>Agent with tools</td><td>Tool results fill the window</td><td>Trim or summarise tool output</td></tr></table></div>
+<h3>Apply it: real code</h3>
+<p>This is the trimming logic most chat apps need. It uses OpenAI's <code>tiktoken</code> library, which you can run locally. For other providers, use their own token-counting tool.</p>
+<pre>import tiktoken
+enc = tiktoken.get_encoding("cl100k_base")
+
+def count(text): return len(enc.encode(text))
+
+def fit_history(system, messages, window=8000, reserve_out=1000):
+    budget = window - reserve_out - count(system)
+    kept, used = [], 0
+    for m in reversed(messages):
+        n = count(m["content"])
+        if used + n > budget: break
+        kept.insert(0, m); used += n
+    return [{"role": "system", "content": system}] + kept</pre>
+<div class="note"><b>Extension ideas:</b> pin a "user profile" message, summarise the dropped part, then run the function against a 50-message conversation and print what was dropped.</div></section>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+const SEC=[["Intro",4],["BPE",9],["Playground",8],["Window",10],["Budget",8],["Quiz",6]];
+$("#nav").innerHTML=SEC.map((s,i)=>`<button onclick="go(${i})" id="n${i}">${s[0]} <small>${s[1]}m</small></button>`).join("");
+function go(i){document.querySelectorAll("section").forEach((e,k)=>e.classList.toggle("on",k==i));SEC.forEach((_,k)=>$("#n"+k).classList.toggle("on",k==i));scrollTo(0,0)}
+const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+
+const BW=[["low_",5],["lower_",2],["newest_",6],["widest_",3]];let bs,bl;
+function bpeReset(){bs=BW.map(([w,c])=>({t:[...w],c}));bl=[];bpeDraw()}
+function pairs(S){const p={};S.forEach(w=>{for(let i=0;i<w.t.length-1;i++){const k=w.t[i]+"\u0001"+w.t[i+1];p[k]=(p[k]||0)+w.c}});return Object.entries(p).sort((a,b)=>b[1]-a[1])}
+function bpeStep(){const p=pairs(bs);if(!p.length||p[0][1]<2)return;const[a,b]=p[0][0].split("\u0001");bl.push(a+"+"+b+" → "+a+b);
+ bs.forEach(w=>{for(let i=0;i<w.t.length-1;){if(w.t[i]==a&&w.t[i+1]==b)w.t.splice(i,2,a+b);else i++}});bpeDraw()}
+function bpeDraw(){$("#bpeWords").innerHTML=bs.map(w=>`<div>${w.t.map((x,i)=>`<span class="tok t${i%4}">${esc(x)}</span>`).join("")} <span class="mut">× ${w.c}</span></div>`).join("");
+ const p=pairs(bs).slice(0,5);$("#bpePairs").innerHTML=p.length?"<table>"+p.map(([k,c])=>`<tr><td>${k.replace("\u0001"," + ")}</td><td>${c}</td></tr>`).join("")+"</table>":"nothing left to merge";
+ $("#bpeLog").innerHTML=bl.length?bl.map((x,i)=>`${i+1}. ${esc(x)}`).join("<br>"):"none yet"}
+bpeReset();
+
+const PRE=/ ?[A-Za-z]+|\d| ?[^\sA-Za-z\d]+|\s+/gu,isW=w=>/^ ?[A-Za-z]+$/.test(w);
+const CORP=("The model reads text as tokens. A tokenizer splits the text into small pieces and the model predicts the next token. "+
+"Long conversations use many tokens, and the context window limits how many tokens the model can use. When the window is full, the application must remove or summarize old messages. "+
+"Developers count tokens to control cost, and they test the application with real users. Translation, question answering and summarization all depend on how the text is split. "+
+"The assistant can answer questions, write code, and explain ideas in simple words. We are learning how language models work and how to build useful applications. ").repeat(2);
+const merges=[];(function(){const f={};(CORP.match(PRE)||[]).filter(isW).forEach(w=>f[w]=(f[w]||0)+1);
+ const S=Object.entries(f).map(([w,c])=>({t:[...w],c}));
+ for(let n=0;n<120;n++){const p=pairs(S);if(!p.length||p[0][1]<2)break;const[a,b]=p[0][0].split("\u0001");merges.push([a,b]);
+  S.forEach(w=>{for(let i=0;i<w.t.length-1;){if(w.t[i]==a&&w.t[i+1]==b)w.t.splice(i,2,a+b);else i++}})}})();
+function enc(text){const out=[];for(const w of (text.match(PRE)||[])){
+ if(isW(w)){let t=[...w];for(const[a,b]of merges){for(let i=0;i<t.length-1;){if(t[i]==a&&t[i+1]==b)t.splice(i,2,a+b);else i++}}out.push(...t)}
+ else if(/^\s+$/.test(w)||/^[\x00-\x7f]+$/.test(w))out.push(...(/^\s+$/.test(w)?[w]:[...w]));
+ else new TextEncoder().encode(w).forEach(b=>out.push("‹"+b.toString(16).toUpperCase()+"›"))}return out}
+const ntok=t=>enc(t).length;
+function ex(t){$("#pt").value=t;play()}
+function play(){const t=$("#pt").value,k=enc(t);$("#ptOut").innerHTML=k.map((x,i)=>`<span class="tok t${i%4}">${esc(x)}</span>`).join("");
+ $("#pc1").textContent=k.length;$("#pc2").textContent=[...t].length;$("#pc3").textContent=k.length?([...t].length/k.length).toFixed(2):"0"}
+$("#pt").addEventListener("input",play);play();
+
+const SYS="You are a helpful cooking assistant.";
+const MSG=["User: Hi! I'm Priya. I'm allergic to peanuts, so keep that in mind for recipes.","User: Can you suggest a quick breakfast?","Bot: Sure, try oats with banana and chia seeds. It takes five minutes.","User: Nice. What about lunch? I only have 20 minutes and a microwave.","Bot: How about a veggie khichdi in the microwave? Rice, dal, carrots, peas and a little ghee.","User: Love it. Any dinner ideas with the same ingredients?","Bot: Make a quick vegetable pulao, or stuff the leftovers into a wrap.","User: Great. Last thing, suggest a snack for tonight."];
+const SUMM="Summary: user is Priya, allergic to peanuts, wants quick meals.";
+function sim(){const lim=+$("#win").value,n=+$("#nm").value,st=$("#strat").value;$("#winV").textContent=lim;$("#nmV").textContent=n;
+ const m=MSG.slice(0,n).map(t=>({t,n:ntok(t)}));let room=lim-ntok(SYS),keep=new Set(),sum=false;
+ const take=(i)=>{if(m[i].n<=room){room-=m[i].n;keep.add(i);return true}return false};
+ if(st=="pin"&&m.length){take(0)}
+ if(st=="sum"){const need=ntok(SUMM);const dropped=(()=>{let r=room-need,c=0;for(let i=m.length-1;i>=0;i--){if(m[i].n<=r){r-=m[i].n;c++}else break}return c<m.length})();if(dropped){room-=need;sum=true}}
+ for(let i=m.length-1;i>=0;i--){if(keep.has(i))continue;if(!take(i))break}
+ let h=sum?`<div class="msg sum">📝 ${SUMM} <span class="mut">(${ntok(SUMM)} tokens)</span></div>`:"";
+ h+=`<div class="msg in"><b>System:</b> ${SYS} <span class="mut">(${ntok(SYS)} tokens, always kept)</span></div>`;
+ h+=m.map((x,i)=>`<div class="msg ${keep.has(i)?"in":"out"}">${esc(x.t)} <span class="mut">(${x.n})</span></div>`).join("");
+ $("#simOut").innerHTML=h;const used=lim-room;
+ const safe=keep.has(0)||sum;const last=n==8;
+ $("#simVerdict").innerHTML=(last?(safe?`<span class="ok">✔ Bot still knows about the allergy, so it suggests <b>roasted chana</b>.</span>`:`<span class="bad">✘ The allergy fell out of the window, so the bot suggests <b>peanut chikki</b>. Unsafe!</span>`):`<span class="mut">Send all 8 messages to see the final answer.</span>`)+` <span class="mut">Window used: ${used} / ${lim} tokens.</span>`;
+ $("#simBar").innerHTML=`<div style="width:${used/lim*100}%;background:var(--t3)">${used}</div>`}
+sim();
+
+const BF=[["sys","System prompt",300,3000,600,"t1"],["hist","Conversation history",0,6000,3000,"t2"],["docs","Retrieved chunks",0,6000,2500,"t3"],["out","Reserved for answer",0,3000,1500,"t4"]];
+$("#bud").innerHTML=BF.map(f=>`<label for="b_${f[0]}">${f[1]}: <b id="v_${f[0]}">${f[4]}</b></label><input type="range" id="b_${f[0]}" min="${f[2]}" max="${f[3]}" step="50" value="${f[4]}" oninput="bud()">`).join("");
+function bud(){const v={};BF.forEach(f=>{v[f[0]]=+$("#b_"+f[0]).value;$("#v_"+f[0]).textContent=v[f[0]]});
+ const tot=v.sys+v.hist+v.docs+v.out,W=8000;
+ $("#budBar").innerHTML=BF.map(f=>`<div class="${f[5]}" style="width:${v[f[0]]/Math.max(tot,W)*100}%">${v[f[0]]>500?f[1].split(" ")[0]:""}</div>`).join("");
+ const e=[];if(tot>W)e.push(`Over budget by ${tot-W} tokens`);if(v.sys<300)e.push("System prompt too short");if(v.docs<1500)e.push("Need at least 1,500 for retrieved chunks");if(v.out<800)e.push("Reserve at least 800 for the answer");
+ const cost=((v.sys+v.hist+v.docs)*3+v.out*15)/1e6*10000;
+ $("#budRes").innerHTML=(e.length?`<span class="bad">✘ ${e.join(". ")}.</span>`:`<span class="ok">✔ Passed. Total ${tot} of ${W} tokens.</span>`)+`<br><span class="mut">Total: ${tot} / ${W}. Estimated cost for 10,000 calls: $${cost.toFixed(2)}</span>`}
+bud();
+
+const Q=[["What does the model actually receive as input?",["Raw letters","A list of token IDs","Whole words","Images of text"],1,"Text is converted to token IDs before the model sees anything. This is also why letter-counting tasks are hard."],
+["In BPE, what decides which tokens exist in the vocabulary?",["A linguist's word list","The most frequent adjacent pairs in training data","Alphabetical order","Random choice"],1,"BPE repeatedly merges the most frequent pair, so the vocabulary is learned from data."],
+["The same sentence costs far more tokens in Tamil than in English. The main reason?",["Tamil is harder for models","The tokenizer saw less Tamil, so words split into many small pieces","APIs charge extra for Tamil","Tamil uses more spaces"],1,"Less training data means fewer merges for that script, so more tokens per sentence."],
+["Your window is 8,000 tokens. Prompt plus history is 8,000. What happens?",["Nothing, the model has extra space","The model has no room to answer","The model speeds up","History is auto-summarised"],1,"Output tokens also count against the window, so always reserve space for the answer."],
+["A bot forgot the user's allergy in a long chat. Best fix?",["Use a bigger model only","Pin critical facts or store them in memory and re-insert them","Ask the user to repeat","Lower the temperature"],1,"Pinned or retrieved facts survive trimming. A bigger window only postpones the problem."]];
+let qi=0,qs=0;function qdraw(){if(qi>=Q.length){$("#quiz").innerHTML="";$("#quizEnd").innerHTML=`<div class="card"><div class="stat">${qs} / ${Q.length}</div><p>${qs>=4?"Strong work. You can explain tokens, BPE and context budgeting.":"Revisit Parts 2 and 3 and try again."}</p><button class="b" onclick="qi=0;qs=0;$('#quizEnd').innerHTML='';qdraw()">Retry</button></div>`;return}
+ const q=Q[qi];$("#quiz").innerHTML=`<div class="card"><p class="mut">Question ${qi+1} of ${Q.length}</p><b>${q[0]}</b>${q[1].map((o,i)=>`<button class="opt" onclick="qa(${i},this)">${o}</button>`).join("")}<div id="qf"></div></div>`}
+function qa(i,el){const q=Q[qi];document.querySelectorAll(".opt").forEach((b,k)=>{b.disabled=true;if(k==q[2])b.classList.add("right")});if(i!=q[2])el.classList.add("wrong");else qs++;
+ $("#qf").innerHTML=`<p>${i==q[2]?"<b class='ok'>Correct.</b>":"<b class='bad'>Not quite.</b>"} ${q[3]}</p><button class="b" onclick="qi++;qdraw()">${qi==Q.length-1?"See score":"Next question"}</button>`}
+qdraw();go(0);
+</script></body></html>
